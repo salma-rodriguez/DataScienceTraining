@@ -1,0 +1,278 @@
+---
+title: "Vehicle Transmission Effect on MPG"
+author: "Salma Rodriguez"
+date: "`r Sys.Date()`"
+fontsize: 10pt
+margin: 1in
+output:
+  html_document:
+    fig_caption: yes
+documentclass: article
+---
+
+```{r load_packages, include=FALSE}
+library(grid); library(gridExtra); library(ggplot2); library(stargazer); library(caret)
+```
+
+## Summary
+
+In this report, we explore the relationship between miles per gallon (MPG) and other characteristics for different car models in order to determine whether vehicles with automatic or manual transmission are more fuel efficient. We quantify the MPG difference between automatic and manual transmission and provide the results of our findings. The analysis shows that although there is greater MPG for vehicles with manual transmission on the overall center and spread of the MPG distribution, there are a few trade-offs to consider.
+
+## Loading the Data
+
+We begin by loading the *mtcars* dataset into R.
+
+```{r}
+data(mtcars)
+```
+
+## Exploratory Analysis
+
+For an overall illustration of how automatic transmission fares against manual transmission, we take a **boxplot** of the data. The boxplot can be found in **Figure 1** of the appendix. It seems that manual transmission yields higher MPG than automatic transmission. However, note that manual transmission has a larger interquartile range (IQR) than automatic transmission.
+
+We split the vehicles into two groups: AT being automatic transmission, and MT being manual transmission. Afterwards, we take the respective variances.
+
+```{r}
+AT <- subset(mtcars, am == 0); varAT <- var(AT$mpg) # automatic transmission
+MT <- subset(mtcars, am == 1); varMT <- var(MT$mpg) # manual transmission
+```
+
+The MPG variance for automatic transmission is `r sprintf("%.3f", varAT)` and the variance for manual transmission is `r sprintf("%.3f", varMT)`. This coincides with our IQR observation.
+
+The plot in **Figure 3** shows that although manual transmission has better mileage than automatic, vehicles with manual transmission have a steeper MPG loss per 1000 lb weight increment, meaning that automatic transmission is better for heavy vehicles. **Figure 3** also shows the residual plots for gross horsepower, displacement (in cu. in.) and rear axle ratio. We expect volatility to be introduced in the linear model when including these and other (possibly confounding) variables.
+
+## Regression Analysis
+
+### Constructing a Prototype Model Using a Top-Down Approach
+
+For our regression analysis, we will first fit a linear model of mpg against all variables. A scatter matrix showing the correlation between all pairs is given in **Figure 2** of the appendix.
+
+```{r}
+fit <- lm(mpg ~ ., mtcars)
+```
+
+The importance of the variables is illustrated in the following table.
+
+```{r echo=FALSE, results='hide'}
+imp <- varImp(fit)
+
+rowlab <- rownames(imp) # don't lose row names
+imp.sorted <- data.frame(importance = imp[order(imp, decreasing = T), ], 
+                        row.names = rowlab[order(imp, decreasing = T)])
+
+stars <- stargazer(imp.sorted, summary = FALSE, type = "html")
+```
+
+`r stars`
+
+### Tuning the Model Using a Bottom-Up Approach
+
+Let us fit several linear models on mtcars (with *am* as a factor variable). Each successive model builds incrementally on the previous model. We begin with a single regressor: weight, since there is a strong correlation between MPG and weight for both manual and automatic transmission and continue by adding other regressors in the order of importance. We then perform a deviance (residual variation) analysis to determine which model has the best fit for MPG.
+
+```{r}
+fit1 <- lm(mpg ~ wt, data = mtcars)
+fit2 <- lm(mpg ~ wt + factor(am), data = mtcars)
+fit3 <- lm(mpg ~ wt + factor(am) + qsec, data = mtcars)
+fit4 <- lm(mpg ~ wt + factor(am) + qsec + hp, data = mtcars)
+fit5 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp, data = mtcars)
+fit6 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp + drat, data = mtcars)
+fit7 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp + drat + factor(gear), data = mtcars)
+fit8 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp + drat + factor(gear)
+                                                           + factor(carb), data = mtcars)
+fit9 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp + drat + factor(gear)
+                                                           + factor(carb)
+                                                           + factor(vs  ), data = mtcars)
+fit0 <- lm(mpg ~ wt + factor(am) + qsec + hp + disp + drat + factor(gear)
+                                                           + factor(carb)
+                                                           + factor(vs  )
+                                                           + factor(cyl ), data = mtcars)
+```
+
+```{r results='hide', echo=FALSE}
+stars <- stargazer(anova(fit1, fit2, fit3, fit4, fit5, fit6, fit7, fit8, fit9, fit0), 
+                  summary = FALSE, title = "Deviance Summary", type = "html")
+```
+
+`r stars`
+
+According to the results in the deviance table, model three (3) has the best fit, with weight (wt), transmission (am) and quarter mile time (qsec) all having significant correlation. There is no significant correlation in the other models, and adding more variables is thus likely to have an adverse effect on the goodness of fit.
+
+We will now take a look at our optimal model, with automatic and manual transmission treated separately. Just for fun, we decided to include the *cyl* variable, for six and eight cylinders, to examine what the mileage is compared to four cylinders.
+
+```{r}
+fitAT <- lm(mpg ~ wt - am + qsec + I(cyl == 6) + I(cyl == 8), data = AT)
+fitMT <- lm(mpg ~ wt - am + qsec + I(cyl == 6) + I(cyl == 8), data = MT)
+
+cAT <- coef(fitAT); cMT <- coef(fitMT) # and here are those coefficients
+```
+
+Keeping the original order of the variables, the equation for the automatic transmission data model is:
+
+$y_{AT}$ $=$ `r cAT[1]` $+$ `r cAT[2]`$\beta_{wtAT}$ $+$ `r cAT[3]`$\beta_{qsecAT}$
+                                                     $+$ `r cAT[4]`$\beta_{cyl_{4\rightarrow6}AT}$
+                                                     $+$ `r cAT[5]`$\beta_{cyl_{4\rightarrow8}AT}$
+
+Likewise, the equation for the manual transmission data model is:
+
+$y_{MT}$ $=$ `r cMT[1]` $+$ `r cMT[2]`$\beta_{wtMT}$ $+$ `r cMT[3]`$\beta_{qsecMT}$
+                                                     $+$ `r cMT[4]`$\beta_{cyl_{4\rightarrow6}MT}$
+                                                     $+$ `r cMT[5]`$\beta_{cyl_{4\rightarrow8}MT}$
+                           
+As expected, there is mileage loss with increasing weight and increased mileage with increasing quarter mile time. However, note how there is a positive correlation with mileage for six cylinders compared to four in the manual transmission data model, as well as eight compared to four. This indicates a sign reversal, since it is not possible that cars with more cylinders have better mileage. Hence, there is a confounding correlation amongst the variables in the model. We decided to investigate this result by plotting mpg vs. cylinders separately, and obtained the result in **Figure 4**, which confirms that this variable is indeed in error when regressed into the model.
+
+Here is the regression model for MPG with the three significant regressors: *wt*, *am* and *qsec*, factored in.
+
+```{r}
+fit <- lm(mpg ~ wt + I(am == 1) + qsec, data = mtcars); coe <- coef(fit)
+```
+
+The equation for the optimal MPG model (without interaction terms) is:
+
+$y$ $=$ `r coe[1]` $+$ `r coe[2]`$\beta_{wt}$ $+$ `r coe[3]`$\beta_{am}$ $+$ `r coe[4]`$\beta_{qsec}$
+
+As expected, there is a positive correlation between MPG and quarter mile time, as well as MPG and manual transmission (numerator) compared to automatic transmission (denominator). The negative coefficient for weight is indicative of the MPG decrease per 1000 lb increment in weight. Without adjusting for interaction between existing variables, the R-squared value of the optimal MPG model is `r summary(fit)$r.squared`. We will see how this R-squared value can be improved in the next section.
+
+### Adjusting for Interactions Amongst Variables
+
+The R-squared value is defined as the residual variation, obtained after computing the deviance of the regressors from the mean, over the total variation explained by the the data used to build the regression model. The R-squared value is also known as the coefficient of determination and is computed as follows:
+
+$$
+  R^2 \equiv 1 - \frac{\sum_i(y_i - \hat{y}_i)^2}{\sum_i(y_i - \bar{y})^2} = 1 - \frac{RSS}{TSS},
+$$
+
+where $y_i$ is the actual value of sample i, $\hat{y}_i$ is the predicted value and $\bar{y}$ is the expected value of the samples. This is equivalent to the residual sum of squares (residual variation), $RSS$, over the total sum of squares (explained variation), $TSS$.
+
+RSS cannot be changed since this is variation in the data itself, but what can we do to improve the residual variation (deviance), or unexplained variation found in the model? How does improving the residual variation affect the coefficient of determination?
+
+Our model tuning has already helped reduce the residual variation, but it can be reduced further. We construct various linear models adjusting for interaction between the variables determined to best fit the MPG observations. We then build a table comparing the deviance (unexplained variance in the model) to the coefficient of determination. The table is sorted by increasing deviance. The full code is available in the public repository for this project [1].
+
+```{r}
+# one interaction term
+fit1 <- lm(mpg ~ wt + am + qsec + wt:am, data = mtcars)
+fit2 <- lm(mpg ~ wt + am + qsec + wt:qsec, data = mtcars)
+fit3 <- lm(mpg ~ wt + am + qsec + am:qsec, data = mtcars)
+
+# two interaction terms
+fit4 <- lm(mpg ~ wt + am + qsec + wt:am + wt:qsec, data = mtcars)
+fit5 <- lm(mpg ~ wt + am + qsec + wt:am + am:qsec, data = mtcars)
+fit6 <- lm(mpg ~ wt + am + qsec + wt:qsec + am:qsec, data = mtcars)
+
+# three interaction terms
+fit7 <- lm(mpg ~ wt + am + qsec + wt:am + wt:qsec + am:qsec, data = mtcars)
+```
+```{r echo=FALSE, results='hide'}
+# deviances
+devs <- c(deviance(fit1), deviance(fit2), deviance(fit3),
+            deviance(fit4), deviance(fit5), deviance(fit6), deviance(fit7))
+
+devs <- round(devs)
+
+# determination coefficient
+rsqs <- c(summary(fit1)$r.squared, summary(fit2)$r.squared,
+          summary(fit3)$r.squared, summary(fit4)$r.squared,
+          summary(fit5)$r.squared, summary(fit6)$r.squared,
+          summary(fit7)$r.squared)
+          
+# deviances vs r-squared values
+devsvrsqs <- data.frame(devs, rsqs)
+colnames(devsvrsqs) <- c("deviance", "R-squared")
+devsvrsqs <- devsvrsqs[order(devsvrsqs$dev, decreasing = TRUE), ]
+
+stars <- stargazer(devsvrsqs, title = "Deviance vs R-sq",
+                   column.sep.width = "25pt",
+                                            summary = FALSE, type = "html")
+```
+
+`r stars`
+
+The results above coincide with the theoretical relationship. Although a higher R-squared value is indicative of higher goodness of fit, it is not best practice to overfit the data. The low deviance in model seven (7) implies that there is very little regression error that can be attributed to the model. This can have the side effect of creating a biased model that is inflexible to new data.
+
+The pedantic data scientist would carefully analyze trade-offs and end up choosing model one (1) for the following two reasons:
+
+1. Weight (wt) and transmission (am) are the two most important variables.
+2. When adjusting for the relationship between *wt* and *am*, the residual variation is neither too high, nor too low. Hurray for mediocrity!
+
+We choose model one (1) as the optimal model, adjusted for endogenous interactions amongst variables. Here is a summary of the coefficients, standard error, t-values, and p-values:
+
+```{r echo=FALSE, results='hide'}
+stars <- stargazer(summary(fit1)$coef, type = "html")
+```
+
+`r stars`
+
+Finally, here is the equation for the optimal MPG model, adjusting for interaction amongst variables:
+
+```{r echo=FALSE}
+coe <- coef(fit1)
+```
+
+$y$ $=$ `r coe[1]` $+$ `r coe[2]`$\beta_{wt}$ $+$ `r coe[3]`$\beta_{am}$ $+$ `r coe[4]`$\beta_{qsec}$
+                                              $+$ `r coe[5]`$\beta_{wt\times am}$
+
+## Conclusion
+
+The results of empirical analysis shows that manual transmission has an advantage over automatic transmission for lighter vehicles. Manual transmission also tends to perform better than automatic for increasing quarter mile time, horsepower, and number of cylinder (except for eight, where there is no apparent difference).
+
+## Appendix
+
+```{r fig.width=12, fig.height=8, fig.cap="**Figure 1** Boxplot for MPG relative to automatic and manual transmission", echo=FALSE}
+boxplot(mpg ~ am,
+        data = mtcars,
+        col = c("lightcyan", "pink"),
+        main = "MPG for Auto vs Manual Transmission",
+        varwidth = TRUE,
+        boxwex = .3,
+        border = c("blue", "red"),
+        ylab = "Miles Per Gallon (MPG)",
+        xlab = "Transmission (0: Automatic, 1: Manual)")
+        
+legend("topleft", col = c("blue", "red"), lwd = 2, bty = "n",
+       legend = c("auto", "manual"))
+```
+
+```{r echo=FALSE, fig.width=12, fig.height=12, fig.cap="**Figure 2** Scatter matrix showing the correlation between all variables"}
+pairs(mtcars, panel = panel.smooth, main = "Motor Trend Car Road Tests")
+```
+
+```{r fig.width=12, fig.height=12, fig.cap="**Figure 3** Relationship for automatic (red) and manual (black) transmission", echo=FALSE}
+mtcars$am <- factor(mtcars$am, labels = c("Automatic", "Manual"))
+g <- ggplot(mtcars, aes(wt, mpg)) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+            geom_smooth(data = AT, method = "lm", color = "red") +
+            geom_smooth(data = MT, method = "lm", color = "black") +
+labs(x = "Weight (lb/1000)", y = "Miles/(US) gallon", title = "MPG by Weight/1000 lb")
+
+f <- ggplot(data.frame(x = mtcars$hp, y = resid(lm(mtcars$mpg ~ mtcars$hp))),
+            aes(x, y)) + geom_hline(yintercept = 0, size = 1) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+labs(y = "Residual", x = "Gross horsepower", title = "Risk of Including HP");
+
+h <- ggplot(data.frame(x = mtcars$disp, y = resid(lm(mtcars$mpg ~ mtcars$disp))),
+            aes(x, y)) + geom_hline(yintercept = 0, size = 1) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+labs(y = "Residual", x = "Displacement (cu. in.)", title = "Risk of Including Disp.");
+
+t <- ggplot(data.frame(x = mtcars$drat, y = resid(lm(mtcars$mpg ~ mtcars$drat))),
+            aes(x, y)) + geom_hline(yintercept = 0, size = 1) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+labs(y = "Residual", x = "Rear axle ratio", title = "Risk of Including Drat.");
+grid.arrange(g, f, h, t, nrow = 2, ncol = 2)
+```
+
+```{r fig.width=12, fig.height=6, fig.cap="**Figure 4** Increasing no. of cylinders for automatic (red) vs manual (black) transmission", echo=FALSE}
+g <- ggplot(mtcars, aes(cyl, mpg)) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+            geom_smooth(data = AT, method = "lm", color = "red") +
+            geom_smooth(data = MT, method = "lm", color = "black") +
+labs(x = "No. of Cylinders", y = "Miles/(US) gallon", title = "MPG by No. of Cylinders")
+
+f <- ggplot(mtcars, aes(hp, mpg)) +
+            geom_point(size = 3, color = (mtcars$am == "Automatic")*1+1, alpha = 0.3) +
+            geom_smooth(data = AT, method = "lm", color = "red") +
+            geom_smooth(data = MT, method = "lm", color = "black") +
+labs(x = "Gross Horsepower", y = "Miles/(US) gallon", title = "MPG by Gross Horsepower")
+grid.arrange(g, f, ncol = 2)
+```
+
+## External Sources
+[1] https://github.com/salma-rodriguez/RegMods
