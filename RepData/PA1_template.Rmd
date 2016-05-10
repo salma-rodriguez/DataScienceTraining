@@ -1,0 +1,239 @@
+---
+title: "Reproducible Research: Peer Assessment 1"
+output: 
+  html_document:
+    keep_md: true
+---
+
+
+## Loading and preprocessing the data
+
+In order to begin analyzing, we must first unzip the archive in the repository.
+
+```{r}
+unzip("activity.zip")
+```
+
+
+### Reading the data
+
+We load the data into memory, and display the first 10 rows to see what it looks like.
+
+```{r}
+data <- read.csv("activity.csv")
+head(data, 10)
+```
+
+We may want to create a separate POSIX date column, which makes it easier to work with dates.
+
+```{r}
+data$posix_date <- strptime(paste(data$date, data$interval), "%Y-%m-%d %M")
+```
+
+## What is mean total number of steps taken per day?
+
+### Per Diem Totals
+
+We calculate the total number of steps taken per day. To simplify things, we ignore NA values.
+
+```{r}
+perdiem <- tapply(data$steps, data$date, sum)
+```
+
+The following bar graph shows the total number of steps taken each day for the duration of the study. The reason we chose a bar graph is because it did not make sense to use a histogram to compare the total number of steps taken each day.
+
+```{r}
+barplot(perdiem, main = "Steps Taken Per Diem", xlab = "date", ylab = "steps taken")
+```
+
+### Distribution of Steps Taken
+
+Here is a histogram showing the distribution of steps with the frequency measured in **no. of days**.
+
+```{r}
+hist(perdiem, main = "Distribution of Total Daily Steps", xlab = "steps", ylab = "frequency (no. of days)")
+```
+
+### Mean and Median Totals
+
+In order to obtain the mean and median **total** number of steps taken per day, we do the following:
+
+```{r}
+avg_perdiem <- mean(perdiem, na.rm = TRUE)
+med_perdiem <- median(perdiem, na.rm = TRUE)
+```
+
+The mean of the total number of steps taken per day is: `r sprintf("%.6f", avg_perdiem)` and the median is: `r sprintf("%.6f", med_perdiem)`.
+
+## What is the average daily activity pattern?
+
+I think that what is meant here by "averaging across all days" is to take the *per diem* average of the steps completed during each 5-minute interval for that day. Here is the code and plot for this. Note that there are missing values. In the y-axis, we denote the expected value of steps per interval as **E[steps per interval]**.
+
+```{r}
+avint <- tapply(data$steps, data$interval, mean, na.rm = TRUE)
+plot(avint,
+     main = "Average Daily Activity Pattern",
+     xlab = "5-minute interval",
+     ylab = "E[steps per interval]",
+     type = "l")
+```
+
+Overall, the 5-minute interval containing the maximum number of steps is `r data$interval[!is.na(data$steps) & data$steps == max(data$steps, na.rm = TRUE)]`, but if we want the 5-minute interval containing the maximum number of steps on the day with the highest expected value of steps per 5-minute interval on that day, we do the following two operations:
+
+1. Find the date with the highest expected value of steps per 5-minute interval.
+
+```{r}
+avint <- tapply(data$steps, data$date, mean, na.rm = TRUE) # need the total steps per day
+mx <- max(avint[!is.nan(avint)]) # maximum expected value across all the days
+date <- names(avint[!is.nan(avint) & avint == mx])
+```
+
+2. Pull the interval with the highest number of steps for that day.
+
+```{r}
+subset1 <- !is.na(data$steps)
+subset2 <- data$date == date
+subset3 <- data$steps == max(data$steps[data$date == date])
+
+mxint <- data$interval[subset1 & subset2 & subset3]
+```
+
+And, the 5-minute interval containing the maximum number of steps on the day with the highest average number of steps per interval (`r date`) is: `r (mxint[1] + mxint[2]) / 2`. In this case, we interpolated between two max values that were found on the same day, namely: `r mxint[1]` and `r mxint[2]`.
+
+## Imputing missing values
+
+Let us make a deep copy of the original data frame and fill in the missing values with the average per diem total number of steps across all the days.
+
+```{r}
+dat2 <- data # deep copy, I hope... kidding, I did check!
+dat2$steps[is.na(dat2$steps)] <- mean(dat2$steps, na.rm = TRUE)
+```
+
+### Imputation Analysis
+
+Now let us do something similar to what we did before, to calculate the per diem number of steps, make the chart, and report the **mean** and **median** total number of steps taken per day.
+
+We let **pr2diem** be the total number of steps taken per day, and use **barplot** to obtain a chart.
+
+```{r}
+pr2diem <- tapply(dat2$steps, dat2$date, sum, na.rm = TRUE)
+barplot(pr2diem, main = "Steps Taken Per Diem", xlab = "date", ylab = "steps taken")
+```
+
+And now, we calculate the mean and median **total** number of steps, as we did before.
+
+```{r}
+avg_pr2diem <- mean(pr2diem, na.rm = TRUE)
+med_pr2diem <- median(pr2diem, na.rm = TRUE)
+```
+
+The mean of the total number of steps taken per day is: `r sprintf("%.6f", avg_pr2diem)` and the median is: `r sprintf("%.6f", med_pr2diem)`.
+
+#### Taking a Closer Look at Mean and Median
+
+I do not understand how the mean and median turned out to be the equal after imputing the missing data, but let us take a look at the distribution. We would expect a Gaussian distrubtion if the mean and median are, indeed, the same.
+
+```{r}
+hist(pr2diem, main = "Distribution of Total Daily Steps", xlab = "steps", ylab = "frequency (no. of days)")
+```
+
+#### Analyzing the Impact of Missing-Data Imputation
+
+As expected, the distrbution takes sort of a bell shape. Now, the difference for mean and median where the missing data is ignore and where the missing date is filled in with the average per diem total across all days is computed as follows:
+
+* The absolute difference for mean is: `r abs(avg_perdiem - avg_pr2diem)`.
+* The absolute difference for median is: `r abs(med_perdiem - med_pr2diem)`.
+
+Clearly, the mean and median were slightly affected by filling in missing values.
+
+Now, let us see what changes there are in the activity patterns by filling in the missing values.
+
+```{r}
+plot(tapply(dat2$steps, dat2$interval, mean, na.rm = TRUE),
+            main = "Average Daily Activity Pattern", 
+            xlab = "5-minute interval (x10)", 
+            ylab = "E[steps per interval]", 
+            type = "l")
+```
+
+### An Alternative Approach to Imputation
+
+Okay, the last approach seemed to have done something about the missing values. I am still concerned about the way missing values were treated. I did find imputation techniques and R packages online, such as Amelia. I will not use Amelia in the current study, but will consider for the future. I will try to generate more "realistic" values by generating random numbers up to one standard deviation above the mean, and fill in that way.
+
+```{r}
+dat3 <- data # deep copy!
+dat3_sd = sd(dat3$steps, na.rm = TRUE)
+dat3_mean = mean(dat3$steps, na.rm = TRUE)
+
+set.seed(0) # need to set the seed to make this experiment reproducible
+len <- length(dat3$steps[is.na(dat3$steps)])
+dat3$steps[is.na(dat3$steps)] <- (dat3_mean + dat3_sd) * runif(len) # yes, we are evading for loops again
+```
+
+### Imputation Analysis II
+
+Did it work? Let us try to get the absolute difference again, as follows:
+
+First we let *pr3diem* be the total number of steps taken per day.
+
+```{r}
+pr3diem <- tapply(dat3$steps, dat3$date, sum, na.rm = TRUE)
+```
+
+We calculate the mean and median **total** number of steps, as we did before.
+
+```{r}
+avg_pr3diem <- mean(pr3diem, na.rm = TRUE)
+med_pr3diem <- median(pr3diem, na.rm = TRUE)
+```
+
+The mean and median differences using this second technique are as follows:
+
+* The absolute difference for the mean is: `r abs(avg_perdiem - avg_pr3diem)`.
+* The absolute difference for the median is: `r abs(med_perdiem - med_pr3diem)`.
+
+#### Summary
+
+I do not know how accurate my technique is, but let us see what the activity patterns looks like this time:
+
+```{r}
+plot(tapply(dat3$steps, dat3$interval, mean, na.rm = TRUE),
+            main = "Average Daily Activity Pattern", 
+            xlab = "5-minute interval (x10)", 
+            ylab = "E[steps per interval]", 
+            type = "l")
+```
+
+Finally, we will take a look at the distribution of steps using our alternative missing-data imputation technique, to see how much "randomness" we introduced (hoping that it was realistic randomness).
+
+```{r}
+hist(pr3diem, main = "Distribution of Observations", xlab = "steps", ylab = "frequency (days)")
+```
+
+In sum, using mean and standard deviation with a random multiple between 0 and 1 does not yield a distribution of steps that approximates the original distribution of data with missing values (the original distribution having a positive skewness). Why is missing-data imputation so challenging?
+
+## Are there differences in activity patterns between weekdays and weekends?
+
+Here are the activity patterns for weekdays vs. weekends.
+
+```{r}
+
+library(ggplot2)
+
+dat3$weekdays <- weekdays(as.Date(dat3$date))
+dat3$isweekend <- dat3$weekdays %in% c("Saturday", "Sunday")
+
+daily_activity <- tapply(dat3$steps, dat3$date, mean)
+date = as.Date(names(daily_activity))
+steps = daily_activity
+
+dat4 <- data.frame(date, steps)
+dat4$weekdays <- weekdays(date)
+dat4$isweekend <- dat4$weekdays %in% c("Saturday", "Sunday")
+dat4$isweekend <- factor(dat4$isweekend, labels = c("weekdays", "weekend"))
+
+qplot(date, steps, data = dat4, facets = . ~ isweekend, geom = "line")
+
+```
+
+It is clear from the chart above, that there was more weekdays activity monitored by the device than weekend activity during the October to November, 2012 time frame.
