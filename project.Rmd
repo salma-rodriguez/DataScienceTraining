@@ -1,0 +1,248 @@
+---
+title: "Analyzing Subject Performance on Human Activity Recognition Study"
+author: "Salma Rodriguez"
+date: "`r Sys.Date()`"
+fontsize: 10pt
+margin: 1in
+output:
+  html_document:
+    fig_caption: yes
+documentclass: article
+---
+
+```{r load_packages, include=FALSE}
+library(stargazer); library(knitr); require(caret); require(randomForest); require(mlearning); require(rCharts)
+opts_chunk$set(comment = NA, results = "asis", comment = NA, tidy = F)
+```
+
+## Executive Summary
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+### Overview
+
+The purpose of this analysis is to predict how a group of test subjects in a Human Activity Recognition (HAR) study did their exercises, which consisted of unilateral dumbbell biceps curls. The test subjects took measurements about themselves every day to improve their health, and they were assigned a class of exercises, at different sliding windows, without being told which class. Our goal is to build a prediction model using data from accelerometers on the belt, forearm, arm and dumbbell of six participants, where each participant was asked to perform barbell lifts correctly and incorrectly in five different ways. More information about the study can be found in [1].
+
+Here are the five classes of curl exercises studied in this report:
+
+A) According to the specifications
+B) Throwing the elbows to the front
+C) Lifting the dumbbell only halfway
+D) Lowering the dumbbell only halfway
+E) Throwing the hips to the front
+
+## Getting the Data
+
+We will first load the training and testing data sets.
+
+```{r echo=FALSE}
+url1 = "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2 = "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# download the data
+download.file(url1, destfile = "pml-training.csv")
+download.file(url2, destfile = "pml-testing.csv")
+```
+
+```{r echo=TRUE}
+# load the training data set
+raw_train = read.csv("pml-training.csv", 
+                     na.strings=c("NA", "#DIV/0!"), stringsAsFactors = FALSE)
+
+# load the testing data set
+raw_test = read.csv("pml-testing.csv")
+```
+
+## Cleaning the Data
+
+For this report, we will not consider timestamps, the *user_name* variable, or the type of sliding window (new vs. not new). We will also not consider the *num_window* variable. We believe that there is a strong correlation between the sliding window data and the accelerometer, gyroscope, and magnetometer readings, since these readings were taken during each step of the sliding window timeframe used in the study, where the test subject was asked to perform one class of excercises during each step. Therefore, *num_window* may over-fit the training data (low variance), and it is likely to introduce bias if we want to fit new data in the future. Not including the sliding window number avoids the problem of having to penalize the *num_window* variable if the sliding window changes in the future (e.g., it increases, or becomes a mixed size).
+
+Analyzing the data published by the authors, we realize that out of the 38 variables for each of the belt, arm, dumbbell and forearm readings, only 13 were found to contain less than 5% missing or invalid data. These are the readings for roll, pitch, yaw, total acceleration, gyroscope axes, accelerometer axes, and magnetometer axes. Since there are three major axes, this makes nine device readings. We include the device readings along with roll, pitch, yaw, total acceleration and the variable we are predicting (classe) in the clean training set.
+
+```{r}
+raw_train = raw_train[, colSums(is.na(raw_train)) < nrow(raw_train) * 0.05]
+raw_train$classe <- as.factor(raw_train$classe)
+
+clean_train = raw_train[, 8:60]
+```
+
+## Partitioning the Data
+
+We partition the data set, sampling 60% of the original training set for building the model, and 40% for cross-validation on a testing data set.
+
+```{r}
+set.seed(12358)
+inTrain = createDataPartition(y = clean_train$classe, p=0.6, list = FALSE)
+
+training = clean_train[inTrain, ]
+testing = clean_train[-inTrain, ]
+```
+
+## Building the Model (Training)
+
+We can build a very precise data model using the Random Forest classification algorithm.
+
+```{r}
+fit = randomForest(classe ~ ., data = training)
+```
+
+Here are the top 20 most important variables in the Random Forest data model.
+
+```{r echo=FALSE, results='hide'}
+imp = varImp(fit)
+
+rowlab = rownames(imp) # don't lose row names
+imp.sorted = data.frame(imp[order(imp, decreasing = T), ], 
+                        row.names = rowlab[order(imp, decreasing = T)])
+
+imp.sorted.top20 = data.frame(rownames(imp.sorted)[1:20], imp.sorted[1:20, ])
+
+colnames(imp.sorted.top20) = c("variable", "importance")
+
+stars = stargazer(imp.sorted.top20, 
+                  summary = FALSE, title = "Top 20 Variables", type = "html")
+```
+
+`r stars`
+
+## Predicting Pseudo Out-of-Sample (Cross-Validation)
+
+Here are the out-of-sample error rates, precision, recall, specificity, and other classification summaries, sorted by decreasing Fscore of the *classe* variable.
+
+```{r, results='hide', echo=FALSE}
+classeConf = confusion(predict(fit, testing), testing$classe)
+stats = summary(classeConf); stars = stargazer(stats,
+                                             type = "html",
+                                             summary = FALSE,
+                                             column.sep.width = "20pt")
+```
+
+`r stars`
+
+In order to calculate the accuracy of our Random Forest classification model, we can use the following equation:
+
+$$
+  accuracy = \frac{TP + TN}{TP + FP + FN + TN},
+$$
+
+where TP is the number of true positives (or samples correctly classified *into the test class*), TN is the number of true negatives (or samples correctly classified *out of the test class*), FP is the number of false positives (or samples incorrectly classified *into the test class*), and FN is the number of false negatives (or samples incorrectly classified *out of the test class*). In R, this can be calculated as follows:
+
+```{r}
+accuracy = (stats$TP+stats$TN)/(stats$TP+stats$FP+stats$FN+stats$TN)
+```
+
+Here is a summary of how accurately the model classifies new data into the different classes.
+
+```{r echo=FALSE, results='hide'}
+str.acc <- c(sprintf("%.5f", accuracy[1]), 
+             sprintf("%.5f", accuracy[2]), 
+             sprintf("%.5f", accuracy[3]), 
+             sprintf("%.5f", accuracy[4]), 
+             sprintf("%.5f", accuracy[5]))
+
+str.nam <- c(rownames(stats)[1], 
+             rownames(stats)[2], 
+             rownames(stats)[3], 
+             rownames(stats)[4], 
+             rownames(stats)[5])
+
+df.accs <- data.frame(Class = str.nam, Accuracy = str.acc, Error.Rate = sprintf("%.5f", 1-accuracy))
+stars <- stargazer(df.accs, summary = FALSE, title = "Accuracy by Class", type = "html")
+```
+
+`r stars`
+
+With these results, we are confident that our model is ready to classify new data without having to fine-tune the classification algorithm. The total accuracy can be approximated by taking the arithmetic mean of the accuracies above. The total accuracy is `r sprintf("%.5f", sum(accuracy)/length(accuracy))`.
+
+A confusion matrix with the results of cross-validation is provided in the **Appendix** section of this report.
+
+## Predicting Out-of-Sample (Testing)
+
+```{r echo=FALSE}
+pml_write_files = function(x) {
+  n = length(x)
+  for (i in 1:n) {
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+
+We will now predict the out-of-sample (test) data from the **pml-testing.csv** data set. The output is generated in a series of text files which are saved to the local directory. Accuracy verification was completed in another portion of this assignment, with 20 out of the 20 samples classified correctly (i.e., 100% precision and 100% recall).
+
+There are still concerns about bias in the classification model. However, in order to determine potential over-fitting of the training samples, we need a larger sample of new data. If the classification error rate for the new data is higher than the error rate determined from cross-validation, then there would be sufficient evidence to suggest that there is classification bias introduced by the model.
+
+```{r}
+pred.test = predict(fit, raw_test)
+pml_write_files(pred.test)
+```
+
+## Appendix
+
+Here, we include figures and other miscellaneous results. To generate the normalized and non-normalized confusion matrices, we used a custom function, *genConfMatrix*, based on the *confusionImage* function invoked by *plot.confusion* in the **mlearning** package. The code for this is provided in the R Markdown (*.Rmd) file written for the analysis.
+
+### Confusion Matrices
+
+```{r echo=FALSE}
+genConfMatrix <- function(confMatrix, scale=FALSE) {
+  if (scale == TRUE)
+        prior(confMatrix) <- 100 
+  # The above rescales the confusion matrix such that columns sum to 100.
+  opar <- par(mar=c(5.1, 6.1, 2, 2))
+  x <- x.orig <- unclass(confMatrix)
+  x <- log(x + 0.5) * 2.33
+  x[x < 0] <- NA
+  x[x > 10] <- 10
+  diag(x) <- -diag(x)
+  image(1:ncol(x), 1:ncol(x),
+        -(x[, nrow(x):1]), xlab='Actual', ylab='',
+        col=colorRampPalette(c(hsv(h = 0, s = 0.9, v = 0.9, alpha = 1), 
+                              hsv(h = 0, s = 0, v = 0.9, alpha = 1), 
+                              hsv(h = 2/6, s = 0.9, v = 0.9, alpha = 1)))(41), 
+        xaxt='n', yaxt='n', zlim=c(-10, 10))
+  axis(1, at=1:ncol(x), labels=colnames(x), cex.axis=0.8)
+  axis(2, at=ncol(x):1, labels=colnames(x), las=1, cex.axis=0.8)
+  title(ylab='Predicted', line=4.5)
+  abline(h = 0:ncol(x) + 0.5, col = 'gray')
+  abline(v = 0:ncol(x) + 0.5, col = 'gray')
+  text(1:ncol(confMatrix), rep(ncol(confMatrix):1, each=ncol(confMatrix)), 
+        labels = sub('^0$', '', round(c(x.orig), 0)))
+  box(lwd=2)
+  par(opar) # reset par
+}
+```
+
+```{r fig.width=12,fig.height=6,fig.cap="**Left**: Confusion Matrix | **Right**: Normalized Confusion Matrix",echo=F}
+par(mfrow = c(1, 2))
+
+genConfMatrix(classeConf)
+genConfMatrix(classeConf, scale = TRUE)
+```
+
+### Miscellaneous Results
+
+The following plots were built to uncover correlation between variables. Remarkably, we discovered some very artistic patterns.
+
+```{r fig.width=12, fig.height=12, fig.cap="**Making Art with Data**: Two Least Important Variables", echo=FALSE}
+qplot(accel_arm_x, accel_arm_y, color=classe, data=training)
+```
+
+```{r fig.width=12, fig.height=12, fig.cap="**Making Art with Data**: Somewhere In Between", echo=FALSE}
+qplot(magnet_forearm_x, magnet_forearm_y, color=classe, data=training)
+```
+
+```{r fig.width=12, fig.height=12, fig.cap="**Making Art with Data**: Somewhere In Between", echo=FALSE}
+qplot(pitch_forearm, roll_forearm, color=classe, data=training)
+```
+
+```{r fig.width=12, fig.height=12, fig.cap="**Making Art with Data**: Two Most Important Variables", echo=FALSE}
+qplot(roll_belt, yaw_belt, color=classe, data=training)
+```
+
+## Works Cited
+
+[1] Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz3awXcRGJZ
