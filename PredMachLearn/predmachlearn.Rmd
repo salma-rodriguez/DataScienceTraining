@@ -1,0 +1,307 @@
+---
+title: "Analyzing Subject Performance on Human Activity Recognition Study"
+author: "Salma Rodriguez"
+date: "3/18/2020"
+output: html_document
+df_print: paged
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+# library("stringi", "caret", "randomForest", "stargazer", "dplyr")
+knitr::opts_chunk$set(echo = T)
+```
+
+# Executive Summary
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+## Overview
+
+The purpose of this analysis is to predict how a group of test subjects in a Human Activity Recognition (HAR) study did their exercises, which consisted of unilateral dumbbell biceps curls. The test subjects took measurements about themselves every day to improve their health, and they were assigned a class of exercises, at different sliding windows, without being told which class. Our goal is to build a prediction model using data from accelerometers on the belt, forearm, arm and dumbbell of six participants, where each participant was asked to perform barbell lifts correctly and incorrectly in five different ways. More information about the study can be found in [1].
+
+Here are the five classes of curl exercises studied in this report:
+
+A. According to the specifications
+B. Throwing the elbows to the front
+C. Lifting the dumbbell only halfway
+D. Lowering the dumbbell only halfway
+E. Throwing the hips to the front
+
+# Getting the Data
+
+```{r getdata, include=FALSE, echo=FALSE}
+TRAINING_DATA_URL = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+TESTING_DATA_URL = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training_data <- read.csv(TRAINING_DATA_URL, 
+                         na.strings=c("NA", "#DIV/0!"), stringsAsFactors = FALSE);
+testing_data <- read.csv(TESTING_DATA_URL);
+```
+
+We will first load the training and testing data sets.
+
+```{r, include=TRUE}
+# load the training data set
+raw_train = training_data
+
+# load the testing data set
+raw_test = testing_data
+```
+
+# Cleaning the Data
+
+For this report, we will not consider timestamps, the user_name variable, or the type of sliding window (new vs. not new). We will also not consider the num_window variable. We believe that there is a strong correlation between the sliding window data and the accelerometer, gyroscope, and magnetometer readings, since these readings were taken during each step of the sliding window timeframe used in the study, where the test subject was asked to perform one class of excercises during each step. Therefore, num_window may over-fit the training data (low variance), and it is likely to introduce bias if we want to fit new data in the future. Not including the sliding window number avoids the problem of having to penalize the num_window variable if the sliding window changes in the future (e.g., it increases, or becomes a mixed size).
+
+Analyzing the data published by the authors, we realize that out of the 38 variables for each of the belt, arm, dumbbell and forearm readings, only 13 were found to contain less than 5% missing or invalid data. These are the readings for roll, pitch, yaw, total acceleration, gyroscope axes, accelerometer axes, and magnetometer axes. Since there are three major axes, this makes nine device readings. We include the device readings along with roll, pitch, yaw, total acceleration and the variable we are predicting (classe) in the clean training set.
+
+```{r pressure, include=TRUE, echo=FALSE}
+raw_train = raw_train[, colSums(is.na(raw_train)) < nrow(raw_train) * 0.05]
+raw_train$classe <- as.factor(raw_train$classe)
+
+clean_train = raw_train[, 8:60]
+```
+
+# Partitioning the Data
+
+We partition the data set, sampling 60% of the original training set for building the model, and 40% for cross-validation on a testing data set.
+
+```{r partitioning, include=TRUE, echo=TRUE}
+set.seed(12358)
+inTrain = createDataPartition(y = clean_train$classe, p=0.6, list = FALSE)
+
+training = clean_train[inTrain, ]
+testing = clean_train[-inTrain, ]
+```
+
+# Building the Model (Training)
+
+We can build a very precise data model using the Random Forest classification algorithm.
+
+```{r random_forest, include=TRUE, echo=TRUE}
+fit <- randomForest(classe ~ ., data = training)
+```
+
+Here are the top 20 most important variables in the Random Forest data model.
+
+```{r, include = FALSE, echo = TRUE}
+imp = varImp(fit)
+rowlab = rownames(imp)
+imp.sorted = data.frame(variable = rowlab[order(imp, decreasing = T)],
+                        importance = imp[order(imp, decreasing = T), ])
+```
+
+```{r, include = FALSE, echo = FALSE}
+stars = stargazer(imp.sorted[1:20, ], type = "html", summary = FALSE,
+                  column.sep.width = "1em", font.size = "Large")
+```
+
+`r stars`
+
+```{r, include = T, echo = T}
+pred <- predict(fit, testing)
+```
+
+# Splitting the Training and Testing Data Sets by Classe
+
+These early results are useful for splitting the data into its respective
+classification classes.
+
+```{r, include = T, echo = T}
+
+train_group = training %>% group_split(classe)
+test_group  = testing %>% group_split(classe)
+pred_group  = split(pred, factor(pred))
+```
+
+Now, we need arrays to store `true positive`, `false positive`, `true negative`
+and `false negative` values.
+
+ ```{r, include = T, echo = T}
+tp = array(0, dim = c(1, 5))
+tn = array(0, dim = c(1, 5))
+fp = array(0, dim = c(1, 5))
+fn = array(0, dim = c(1, 5))
+````
+
+We tried using our own understanding of hypothesis testing to manually determine
+the `true positive` (tp), `false positive` (fp), `true negative` (tn) and `false
+negative` (fn) values, but this was futile.
+
+```{r, include = T, echo = F}
+if (F) {
+    for (H in 1:N) {
+        # tp[all] = sum(as.character(pred) == as.character(testing$classe))
+
+        tp[H] = length(pred[as.character(testing$classe) == "A"])
+        # fp[H] = max(length(test_group[[H]]$classe), length(pred_group[[H]])) - tp[H]
+        fp[H] = length(pred_group[[H]]) - tp[H]
+        # test outside of group
+        M = 1:N != H
+        for (I in 1:N) { # true negative
+            if (M[I]) {
+                # tn[H] = tn[H] + sum(as.character(pred_group[[I]]) == test_group[[H]]$classe)
+                tn[H] = tn[H] + sum(as.character(pred_group[[I]]) == testing$classe)
+            }
+        }
+        for (I in 1:N) { # false negative
+            if (M[I]) {
+                # fn[H] = fn[H] + sum(as.character(pred_group[[I]]) == test_group[[H]]$classe)
+                fn[H] = fn[H] + sum(as.character(pred_group[[I]]) == testing$classe)
+            }
+        }
+    }
+}
+```
+
+# Classification Statistics
+
+From the very beginning, what we should have done is use the least amount of
+code. The `R` package, `confusionMatrix` does everything we need, so why reinvent the wheel?
+
+```{r, include = T, echo = T}
+
+N = length(levels(pred))
+conf.mat = confusionMatrix(pred, testing$classe)
+
+# TPFP
+for (H in 1:N) {
+    M = 1:N != H
+    tp[H] = conf.mat$table[H, H] # true positive
+    for (I in 1:N) {
+        if (M[I]) {
+            fp[H] = fp[H] + conf.mat$table[H, I] # false positive
+        }
+    }
+}
+
+# TNFN
+for (H in 1:N) {
+    M = 1:N != H
+    for (I in 1:N) {
+        if (M[I]) {
+            tn[H] = tn[H] + conf.mat$table[I, I] # true negative
+            fn[H] = fn[H] + conf.mat$table[I, H] # false negative
+        }
+    }
+}
+tpfptnfn = data.frame(label = c("tp", "fp", "tn", "fn"), value = rbind(tp, fp, tn, fn))
+```
+
+```{r, include = F, echo = F}
+stars = stargazer(tpfptnfn, type = "html", summary = F,
+                  column.sep.width = "1em", font.size = "Large")
+```
+
+`r stars`
+
+# Predicting Pseudo Out-of-Sample (Cross-Validation)
+
+Now, we illustrate the out-of-sample error rates, precision, recall, specificity, and other classification summaries, 
+sorted by decreasing Fscore of the classe variable.
+
+The test statistics of interest are as follows:
+
+1. Sensitivity, Recall or TPR
+2. Specificity, Selectivity or TNR
+3. Precision or PPV
+4. Neg. Predictive Value (NPV)
+5. Miss Rate (FNR)
+6. Fall-Out (FPR)
+7. False Discovery Rate (FDR)
+8. False Omission Rate (FOR)
+9. Threat Score (TS) or Critical Success Index (CSI)
+10. Accuracy (ACC)
+11. Balanced Accuracy (BA)
+12. F1 Score (Balanced F Score)
+13. Matthews Correlation Coefficient (MCC)
+14. Informedness or Bookmaker Informedness (BM)
+15. Markedness (MK) or deltaP
+
+$$
+    TPR = \frac{tp}{tp + fn} \#1 \\~\\
+    TNR = \frac{TN}{TN + fP} \#2 \\~\\
+    PPV = \frac{tp}{tp + fp} \#3 \\~\\
+    NPV = \frac{tn}{tn + fn} = 1 - \text{FOR} \#4 \\~\\
+    FNR = \frac{fn}{fn + tp} = 1 - TPR \#5 \\~\\
+    FPR = \frac{fp}{fp + tn} = 1 - TNR \#6 \\~\\
+    FDR = \frac{fp}{fp + tp} = 1 - PPV \#7 \\~\\
+    FOR = \frac{fn}{fn + tn} = 1 - NPV \#8 \\~\\
+    TS  = \frac{tp}{tp + fn + fp} \#9 \\~\\
+    ACC = \frac{tp + tn}{tp + tn + fp + fn} \#10 \\~\\
+    BA  = \frac{TPR + TNR}{2} \#11 \\~\\
+    F1  = 2 \cdot \frac{PPV \cdot TPR}{PPV + TPR} = \frac{2TP}{2TP + FP + FN} \#12 \\~\\
+    MMC = \frac{TP \times TN - FP \times FN}{\sqrt{(TP + FP)(TP + FN)(TN + FP)(TN + FN)}} \#13 \\~\\
+    BM  = TPR + TNR - 1 \#14 \\~\\
+    MK  = PPV + NPV - 1 \#15
+$$
+
+```{r, include = F, echo = F}
+tpr = t(tp / (tp + fn))
+tnr = t(tn / (tn + fp))
+ppv = t(tp / (tp + fp))
+npv = t(tn / (tn + fn))
+fnr = t(fn / (fn + tp))
+fpr = t(fp / (fp + tn))
+fdr = t(fp / (fp + tp))
+fOr = t(fn / (fn + tn))
+ts  = t(tp / (tp + fn + fp))
+acc = t((tp + tn) / (tp + tn + fp + fn))
+ba  = (tpr + tnr) / 2
+f1  = 2 * ((ppv * tpr) / (ppv + tpr))
+mmc = (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+bm  = tpr + tnr - 1
+mk  = ppv + npv - 1
+
+fs = data.frame(TPR = tpr, TNR = tnr, PPV = ppv, NPV = npv, FNR = fnr,
+                FPR = fpr, FDR = fdr, FOR = fOr, TS = ts, ACC = acc, BA = ba, F1 = f1, MMC = mmc, BM = bm, MK = mk)
+fs = fs[order(f1, decreasing = T), ]
+```
+
+```{r, include = F, echo = F}
+stars = stargazer(fs, type = "html", summary = F,
+                  column.sep.width = "2pt", font.size = "Large")
+```
+
+`r stars`
+
+The accuracy of our Random Forest classification model is in equation #10. Below
+is the **Accuracy by Class**.
+
+```{r, include = T, echo = T}
+ft = data.frame(Class = row.names(fs), Accuracy = fs[, 10], Error.Rate = 1 - fs[, 10])
+stars = stargazer(ft, type = "html", summary = F,
+                  colum.sep.width = "7pt", font.size = "Large")
+```
+
+`r stars`
+
+With these results, we are confident that our model is ready to classify new data without having to fine-tune the 
+classification algorithm. The total accuracy can be approximated by taking the arithmetic mean of the accuracies above. 
+The total accuracy is `r sum(fs[,10]) / N`.
+
+A confusion matrix with the results of cross-validation is provided in the Appendix section of this report.
+
+# Predicting Out-of-Sample (Testing)
+
+We will now predict the out-of-sample (test) data from the pml-testing.csv data set. The output is generated in a series of text files which are saved to the local directory. Accuracy verification was completed in another portion of this assignment, with 20 out of the 20 samples classified correctly (i.e., 100% precision and 100% recall).
+
+There are still concerns about bias in the classification model. However, in order to determine potential over-fitting of the training samples, we need a larger sample of new data. If the classification error rate for the new data is higher than the error rate determined from cross-validation, then there would be sufficient evidence to suggest that there is classification bias introduced by the model.
+
+# Appendix
+
+Here, we include figures and other miscellaneous results. To generate the normalized and non-normalized confusion matrices, we used a custom function, genConfMatrix, based on the confusionImage function invoked by plot.confusion in the mlearning package. The code for this is provided in the R Markdown (*.Rmd) file written for the analysis.
+
+## Confusion Matrices
+
+```{r, include = T, echo = T}
+conf.mat = confusion(pred, testing$classe)
+confusionImage(conf.mat)
+```
+
+# Works Cited
+
+[1] Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more:
+[https://groupware.les.inf.puc-rio.br/har#weight_lifting_exercise#ixzz3awXcRGJZ](https://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises#ixzz3awXcRGJZ)
